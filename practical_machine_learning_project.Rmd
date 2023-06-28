@@ -1,0 +1,194 @@
+---
+title: "Coursera Practical Machine Learning Final Project"
+author: "Gudur Guy"
+date: "6/28/2023"
+output: html_document
+---
+
+# Project Introduction
+
+## Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: 
+
+http://groupware.les.inf.puc-rio.br/har 
+(see the section on the Weight Lifting Exercise Dataset). 
+ 
+## Goal
+ 
+The goal of the project is to predict the manner in which they did the exercise. This is the *"classe"* variable in the training set. We may use any of the other variables to predict with. We should create a report describing how you built our model, how we used cross validation, what we think the expected out of sample error is, and why we made the choices we did. we will also use our prediction model to predict 20 different test cases. 
+
+## Dataset
+
+The training data for this project are available here: 
+
+[Training Data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available here:
+
+[Testing Data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+
+# Loading Packages and Data
+
+## Loading required packages
+
+```{r message=FALSE}
+#load the required libraries
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+opts_chunk$set(echo=TRUE,  warning=FALSE)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(mboost)
+```
+
+## Loading Training and Testing Data
+
+```{r, cache=TRUE}
+set.seed(5432)
+
+trainingUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testingUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+trainingFile <- "training.csv"
+testingFile  <- "testing.csv"
+
+if (!file.exists(trainingFile)){
+  download.file(trainingUrl, trainingFile, method="curl")
+}
+if (!file.exists(testingFile)){
+  download.file(testingUrl, testingFile, method="curl")
+}
+
+trainingData <- read.csv(trainingFile, na.strings=c("NA","#DIV/0!","", "NA"), stringsAsFactors = F)
+testingData <- read.csv(testingFile, na.strings=c("NA","#DIV/0!","", "NA"), stringsAsFactors = F)
+dim(trainingData)
+dim(testingData)
+names(trainingData)
+```
+
+# Data Preprocessing
+
+## Remove Nearly Zero Variance Variables
+```{r}
+# testing for NZV for all variables except the "classe" 
+NZV <- nearZeroVar(trainingData[, -160])
+trainingData <- trainingData[, -NZV]
+dim(trainingData)
+```
+
+## Remove Mostly NA Variables
+
+```{r}
+# testing for NA for all variables except the "classe" 
+trainNA <- (colSums(is.na(trainingData[, -160])) == 0)
+trainingData <- trainingData[, trainNA]
+dim(trainingData)
+names(trainingData)
+```
+
+## Remove First Six Columns
+
+The below six columns do not seem to be having any influence. So, let us remove them.
+```{r}
+# "X"                    "user_name"            "raw_timestamp_part_1"
+# "raw_timestamp_part_2" "cvtd_timestamp"       "num_window"   
+trainingData <- trainingData[, -(1:6)]
+dim(trainingData)
+```
+
+## Split Data into Traning and Testing set for Model Building and Evaluation
+
+Now let us split our training data into Traning and Validation sets
+```{r}
+inTrain  <- createDataPartition(trainingData$classe, p=0.6, list=FALSE)
+trainingSet <- trainingData[inTrain, ]
+testingSet  <- trainingData[-inTrain,]
+dim(trainingSet)
+dim(testingSet)
+```
+
+# Model Selection
+
+Now let us try to see which model works well with our. Let us consider a couple or more models depending on their performance.
+\
+First let us try Decision Tree Model.
+
+
+## Decision Tree
+
+```{r}
+dtModFit <- rpart(classe ~ ., data=trainingSet, method="class")
+prp(dtModFit, extra=6, box.palette="auto")
+```
+
+Now Evaluate Prediction using this model using testing data
+
+```{r}
+dtPredictions <- predict(dtModFit, testingSet, type = "class")
+dtCM <- confusionMatrix(dtPredictions, as.factor(testingSet$classe))
+dtCM
+```
+Now let us look at the accuracy and estimate out of sample error 
+
+```{r}
+as.numeric(dtCM$overall[1])
+1 - as.numeric(dtCM$overall[1])
+```
+With an accuracy of 75% and estimate out of sample error 0.25, Decision Tree does not seem to be a great model for this data. So, let us explore other models.
+
+## Random Forest
+
+Due to computational cost of Random Forest Modeling, we will use five fold cross validation for Random Forest Modeling
+
+```{r, cache=TRUE}
+rfModelFit <- train(classe ~ ., data = trainingSet, method = "rf", trControl = trainControl(method = "cv", 5), ntree = 250)
+```
+
+Now Evaluate Prediction using this model using testing data
+
+```{r, cache=TRUE}
+rfPredictions <- predict(rfModelFit, testingSet, type = "raw")
+rfCM <- confusionMatrix(rfPredictions, as.factor(testingSet$classe))
+rfCM
+```
+Now let us look at the accuracy and estimate out of sample error for Random Forest Modeling
+
+```{r}
+as.numeric(rfCM$overall[1]) * 100
+1 - as.numeric(rfCM $overall[1])
+```
+With an accuracy of 99.38% and estimate out of sample error 0.0066, Random Forest Model does seem to be a great model for this data. Just to make sure, let us consider one more model.
+
+## Generalized Boosting Model
+
+Let us try one last model, Generalized Boosting Model.
+
+```{r}
+modFitControl <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+gbmFModFit <- train(classe ~ ., data=trainingSet, method = "gbm", trControl = modFitControl, verbose = FALSE)
+gbmPredictions <- predict(gbmFModFit, newdata=testingSet)
+gbmCM <- confusionMatrix(gbmPredictions, as.factor(testingSet$classe))
+```
+
+Now let us look at the accuracy and estimate out of sample error of GBM
+
+```{r}
+as.numeric(gbmCM$overall[1])
+1 - as.numeric(gbmCM$overall[1])
+```
+
+With an accuracy of 96.17% and estimate out of sample error 0.038, GBM does perform well, but not as good as Random Forests. Hence we will select our Random Forest model to evaluated and predict the observations from initial Testing Data.
+
+# Final Predictions using Testing Data with Random Forest Model
+
+```{r}
+finalPredictions <- predict(rfModelFit, testingData, type = "raw")
+finalPredictions
+```
+
+# Conclusion
+
+With an accuracy of 99.38% and estimate out of sample error 0.0066, Random Forest Model performed the best with which we were able to work on the final testing data and able to get the final predictions as shown in the above section. 
